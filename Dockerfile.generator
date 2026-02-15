@@ -1,0 +1,36 @@
+# Dockerfile.generator — builds the cpg-gen tool and generates the CPG database.
+#
+# Build stage: compile cpg-gen and clone source repos.
+# Runtime: generate the database on first run (skips if already exists).
+
+FROM golang:1.25-bookworm AS builder
+
+WORKDIR /build
+
+# Clone source modules (shallow clones for speed).
+RUN git clone --depth 1 https://github.com/prometheus/prometheus.git && \
+    git clone --depth 1 https://github.com/prometheus/client_golang.git && \
+    git clone --depth 1 https://github.com/kubernetes-sigs/prometheus-adapter.git && \
+    git clone --depth 1 https://github.com/prometheus/alertmanager.git
+
+# Copy cpg-gen source and build.
+COPY *.go go.mod go.sum ./generator/
+WORKDIR /build/generator
+RUN go build -o /usr/local/bin/cpg-gen .
+
+# Runtime stage — generate the database.
+FROM golang:1.25-bookworm
+
+RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /usr/local/bin/cpg-gen /usr/local/bin/cpg-gen
+COPY --from=builder /build/prometheus /build/prometheus
+COPY --from=builder /build/client_golang /build/client_golang
+COPY --from=builder /build/prometheus-adapter /build/prometheus-adapter
+COPY --from=builder /build/alertmanager /build/alertmanager
+
+WORKDIR /build
+VOLUME /data
+
+ENTRYPOINT ["/bin/sh", "-c"]
+CMD ["if [ -f /data/cpg.db ]; then echo 'CPG database already exists at /data/cpg.db, skipping generation.'; else echo 'Generating CPG database (this may take 10-30 minutes)...'; cpg-gen -modules './client_golang:github.com/prometheus/client_golang:client_golang,./prometheus-adapter:sigs.k8s.io/prometheus-adapter:adapter,./alertmanager:github.com/prometheus/alertmanager:alertmanager' ./prometheus /data/cpg.db && echo 'Database generation complete.'; fi"]

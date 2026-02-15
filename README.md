@@ -1,88 +1,113 @@
-# Take-Home Assignment — Full-Stack Developer
+# CPG Explorer — Code Property Graph IDE
 
-## Context
+A web-based IDE for exploring and understanding Go codebases through their Code Property Graph (CPG). Built for the Prometheus ecosystem.
 
-This archive ships `cpg-gen` — a Code Property Graph (CPG) generator for Go projects. A CPG fuses the abstract syntax tree, control flow graph, data flow graph, call graph, type system, and static analysis results into a single queryable graph stored as an SQLite database.
+## Quick Start
 
-Three Go modules are included: **Prometheus**, **client_golang**, and **prometheus-adapter**. You will add a fourth module yourself (see below).
-
-## Prerequisites
-
-- **Go 1.25+** — the generator requires Go 1.25.0 or later
-
-## Building and Generation
-
-Build the generator and produce the CPG database. The primary module is `./prometheus`; additional modules are specified with the `-modules` flag. Run `./cpg-gen -help` for all available options.
-
-Use this value for `-modules`:
-
-```
-./client_golang:github.com/prometheus/client_golang:client_golang,./prometheus-adapter:sigs.k8s.io/prometheus-adapter:adapter
+```bash
+docker compose up
 ```
 
-Pick a **fourth Go module** from the Prometheus ecosystem — alertmanager, node_exporter, pushgateway, blackbox_exporter, or any other — add it via the same `-modules` flag, and regenerate the database.
+Open **http://localhost:3000** in your browser.
 
-The database is self-documenting: the `schema_docs` table describes every table and column; the `queries` table contains ready-made SQL for common operations. Start there.
+The first run generates the CPG database (~10-30 minutes), subsequent runs start instantly. The database is persisted in a Docker volume.
 
-### What to expect
+## Architecture
 
-The generated database is roughly **900 MB** and contains approximately **555,000 nodes** and **1,500,000 edges**. Design your application with this scale in mind.
+```
+┌─────────────┐     ┌──────────────┐     ┌───────────────────┐
+│   React SPA  │────▶│  Go REST API  │────▶│  SQLite CPG DB    │
+│  (port 3000) │     │  (port 8080)  │     │  (~900 MB)        │
+│  Cytoscape.js│     │  net/http     │     │  555K nodes       │
+│  Tailwind    │     │  go-sqlite3   │     │  1.5M edges       │
+└─────────────┘     └──────────────┘     └───────────────────┘
+```
 
-## Task
+### Services
 
-Build a web application (an in-browser IDE) that lets a developer explore and understand a codebase through the lens of its CPG.
+| Service | Description |
+|---|---|
+| `generator` | Builds cpg-gen, clones Prometheus repos, generates the CPG database (runs once) |
+| `backend` | Go HTTP API serving CPG data from SQLite |
+| `frontend` | React SPA served via Nginx with API proxy |
 
-Technology stack is entirely your choice — use whatever languages, frameworks, and libraries you believe produce the best result. What matters is a well-engineered product.
-
-One hard constraint: **graph visualization must be a central part of the experience**, not a sidebar widget.
-
-## Example Features
-
-Three directions to consider. You may pursue any one, combine several, or take an entirely different approach.
+## Features
 
 ### 1. Call Graph Explorer
+Search any function → visualize its call relationships via BFS expansion. Configurable depth (1-5), direction (callers/callees/both), and layout (hierarchical/force-directed). Double-click a node to re-center the graph around it.
 
-Click a function → BFS over `call` edges → render an interactive call graph (10–60 nodes). Click any node to navigate into its neighborhood. Display source code from the `sources` table on selection.
+### 2. Package Architecture Map
+Force-directed visualization of the package dependency graph (~170 packages, ~400 edges). Node size reflects complexity; click a package to see its functions and metrics.
 
-Relevant built-in queries: `function_neighborhood`, `call_chain`, `callers_of`.
+### 3. Data Flow Slicer
+Trace data flow forward (definitions → uses) or backward (uses → definitions) along DFG edges. Visualize the path from variable creation to consumption.
 
-### 2. Data Flow Slicer
+### 4. Dashboard
+Overview statistics, complexity distribution charts, edge-type breakdown, and hotspot detection — the riskiest functions by combined complexity, fan-in, and finding count.
 
-Select a variable → trace backward or forward along `dfg` edges → visualize the data path from definition to use. Overlay the slice onto source code by highlighting the participating lines.
+### 5. Source Browser
+Browse source files by package with Go syntax highlighting. Navigate directly from graph nodes to the relevant source code.
 
-Relevant built-in queries: `backward_slice`, `forward_slice`, `data_flow_path`.
+## Analyzed Modules
 
-### 3. Package Architecture Map
-
-Render the package dependency graph from `dashboard_package_graph` (~170 packages, ~400 edges). Size nodes by complexity (`dashboard_package_treemap`), color them by module. Click a package to drill down into its functions via `dashboard_function_detail`.
-
-## What We're Looking For
-
-- **Deliberate choices** — which data from the database matters most to a developer, and why you chose it
-- **A working prototype** that handles the full dataset, not a static mockup
-- **Focused subgraphs** (10–100 nodes per view) rather than an attempt to render the entire graph at once
-
-## Evaluation Criteria
-
-| Criterion | Weight |
+| Module | Description |
 |---|---|
-| Graph work — visualization, interactivity, meaningful subgraph selection | 25% |
-| Developer utility — how effectively the tool aids code comprehension | 20% |
-| Engineering quality — architecture, clean code, separation of concerns | 20% |
-| Performance — smooth operation on the full dataset | 15% |
-| Schema exploration — depth of investigation, creative use of the data | 10% |
-| UI/UX — intuitive interface, loading states, error handling | 10% |
+| **prometheus** (primary) | Core Prometheus server |
+| **client_golang** | Prometheus client library for Go |
+| **prometheus-adapter** | Kubernetes custom metrics adapter |
+| **alertmanager** | Alert routing and notification |
 
-## Submission Format
+## Development
 
-- A git repository with clear setup instructions
-- **A `docker-compose.yml` is required.** We must be able to run `docker compose up` and have the application fully operational — no manual setup steps beyond cloning the repo
-- A brief write-up of the decisions you made and any trade-offs (in the README or a separate file)
+### Prerequisites
+- Go 1.25+ (for cpg-gen only)
+- Node.js 18+ (frontend)
+- Docker & Docker Compose
 
-## Deadline
+### Local Development (without Docker)
 
-24 hours from the moment you begin.
+```bash
+# 1. Generate the database
+git submodule update --init
+go build -o cpg-gen .
+./cpg-gen \
+  -modules "./client_golang:github.com/prometheus/client_golang:client_golang,./prometheus-adapter:sigs.k8s.io/prometheus-adapter:adapter,./alertmanager:github.com/prometheus/alertmanager:alertmanager" \
+  ./prometheus cpg.db
 
-## Questions?
+# 2. Start the backend
+cd backend
+DB_PATH=../cpg.db go run .
 
-If anything is unclear or you run into issues, reach out to [matvei@theartisan.ai](mailto:matvei@theartisan.ai).
+# 3. Start the frontend (in another terminal)
+cd frontend
+npm install
+npm run dev
+```
+
+### API Endpoints
+
+| Endpoint | Description |
+|---|---|
+| `GET /api/overview` | Dashboard statistics |
+| `GET /api/distributions` | Chart data (complexity, edges, nodes) |
+| `GET /api/packages` | List packages with metrics |
+| `GET /api/packages/graph` | Package dependency graph |
+| `GET /api/functions?search=&package=` | Search functions |
+| `GET /api/functions/detail?id=` | Detailed function info |
+| `GET /api/callgraph?id=&depth=&direction=` | Call graph BFS |
+| `GET /api/dataflow?id=&depth=&direction=` | Data flow graph |
+| `GET /api/source?file=` | Source file content |
+| `GET /api/hotspots?limit=` | High-risk functions |
+| `GET /api/search?q=` | Global symbol search |
+| `GET /api/schema` | Self-documenting schema |
+
+## Design Decisions
+
+See [DECISIONS.md](DECISIONS.md) for a detailed write-up of technology choices, architecture decisions, and trade-offs.
+
+## Tech Stack
+
+- **Backend**: Go 1.24, `net/http`, `mattn/go-sqlite3`
+- **Frontend**: React 18, TypeScript, Vite, Cytoscape.js, Tailwind CSS
+- **Database**: SQLite (generated by cpg-gen)
+- **Infrastructure**: Docker Compose, Nginx

@@ -1,0 +1,35 @@
+services:
+  # --- Step 1: Generate CPG database (runs once, then exits) ---
+  generator:
+    build:
+      context: .
+      dockerfile: Dockerfile.generator
+    volumes:
+      - cpg-data:/data
+
+  # --- Step 2: Go API server serving the CPG database ---
+  backend:
+    build: ./backend
+    depends_on:
+      generator:
+        condition: service_completed_successfully
+    volumes:
+      - cpg-data:/data:ro
+    environment:
+      - DB_PATH=/data/cpg.db
+      - ADDR=:8080
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+
+  # --- Step 3: React frontend served via Nginx ---
+  frontend:
+    build: ./frontend
+    depends_on:
+      - backend
+    ports:
+      - "3000:80"
+    restart: unless-stopped
+
+volumes:
+  cpg-data:
